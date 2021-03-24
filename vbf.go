@@ -112,6 +112,8 @@ func (vf *VBF) Put(d []byte) {
 
 func (vf *VBF) Check(d []byte, margin uint8) bool {
 	indexes := vf.indexes(d)
+	threshold := vf.curr - margin
+	//log.Printf("check: margin=%d threshold=%d", margin, threshold)
 	for _, x := range indexes {
 		v := vf.getData(x)
 		if v == 0 {
@@ -122,10 +124,13 @@ func (vf *VBF) Check(d []byte, margin uint8) bool {
 		} else {
 			v -= vf.curr
 		}
-		if v < vf.curr-margin {
+		//log.Printf("check:     x=%-4d v=%d raw=%d", x, v, vf.getData(x))
+		if v < threshold {
+			//log.Print("check: false")
 			return false
 		}
 	}
+	//log.Print("check: true")
 	return true
 }
 
@@ -133,7 +138,7 @@ func (vf *VBF) SetCurr(curr uint8) bool {
 	if curr == 0 || curr > vf.max {
 		return false
 	}
-	vf.curr = vf.max
+	vf.curr = curr
 	return true
 }
 
