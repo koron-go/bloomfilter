@@ -1,7 +1,6 @@
 package bloomfilter
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/dgryski/go-metro"
@@ -59,11 +58,27 @@ func (vf *VBF) putData(x int, v uint8) {
 	case 1:
 		y := 7 - x%8
 		d := vf.data[x/8]
-		d &= ^(1 << y)
-		d |= (v & 1) << y
+		d &= ^(0x01 << y)
+		d |= (v & 0x01) << y
 		vf.data[x/8] = d
+
+	case 2:
+		y := 6 - (x%4)*2
+		d := vf.data[x/4]
+		d &= ^(0x03 << y)
+		d |= (v & 0x03) << y
+		vf.data[x/4] = d
+
+	case 4:
+		y := 4 - (x%2)*4
+		d := vf.data[x/2]
+		d &= ^(0x0f << y)
+		d |= (v & 0x0f) << y
+		vf.data[x/2] = d
+
 	case 8:
 		vf.data[x] = v
+
 	default:
 		// TODO:
 	}
@@ -74,6 +89,12 @@ func (vf *VBF) getData(x int) uint8 {
 	case 1:
 		y := 7 - x%8
 		return (vf.data[x/8] >> y) & 0x01
+	case 2:
+		y := 6 - (x%4)*2
+		return (vf.data[x/4] >> y) & 0x03
+	case 4:
+		y := 4 - (x%2)*4
+		return (vf.data[x/2] >> y) & 0x0f
 	case 8:
 		return vf.data[x]
 	default:
@@ -89,7 +110,7 @@ func (vf *VBF) Put(d []byte) {
 	}
 }
 
-func (vf *VBF) Check(ctx context.Context, d []byte, margin uint8) bool {
+func (vf *VBF) Check(d []byte, margin uint8) bool {
 	indexes := vf.indexes(d)
 	for _, x := range indexes {
 		v := vf.getData(x)
