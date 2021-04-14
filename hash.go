@@ -8,7 +8,7 @@ import (
 
 // Hasher defines hashing method for bloom filter.
 type Hasher interface {
-	// Hash compute 
+	// Hash compute
 	Hash(ctx context.Context, k int, d []byte) (int, error)
 }
 
