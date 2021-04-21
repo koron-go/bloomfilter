@@ -96,7 +96,7 @@ func (vf *VBF2) Check(d []byte, bias uint8) bool {
 }
 
 func (vf *VBF2) Subtract(delta uint8) {
-	for i:=0 ; i < vf.m; i++ {
+	for i := 0; i < vf.m; i++ {
 		v := vf.getData(i)
 		if v > delta {
 			v -= delta
