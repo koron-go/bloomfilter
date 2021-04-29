@@ -57,7 +57,7 @@ func checkVBF2(tb testing.TB, m, k, num int, f float64, nbits uint8) {
 			falsePositive++
 		}
 	}
-	errRate := float64(falsePositive) / float64(m) * 100
+	errRate := float64(falsePositive) / float64(num) * 100
 	//tb.Logf("error rate: %.2f%% false_positive=%d m=%d k=%d n=%d f=%f", errRate, falsePositive, m, k, num, f)
 	if errRate > 1 {
 		tb.Errorf("too big error rate: %.2f%% false_positive=%d m=%d k=%d n=%d f=%f nbits=%d", errRate, falsePositive, m, k, num, f, nbits)
