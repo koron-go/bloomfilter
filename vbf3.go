@@ -11,9 +11,9 @@ type VBF3 struct {
 	k    int
 	data []byte
 
-	max    uint8
 	bottom uint8
 	top    uint8
+	max    uint8
 }
 
 func NewVBF3(m, k int, maxLife uint8) *VBF3 {
@@ -22,9 +22,9 @@ func NewVBF3(m, k int, maxLife uint8) *VBF3 {
 		k:    k,
 		data: make([]byte, m),
 
-		max:    maxLife,
 		bottom: 1,
 		top:    maxLife,
+		max:    maxLife,
 	}
 }
 
@@ -93,9 +93,9 @@ func (f *VBF3) Check(d []byte) bool {
 	return retval
 }
 
-func (f *VBF3) Subtract(delta uint8) {
-	f.bottom = f.m255p1add(f.bottom, delta)
-	f.top = f.m255p1add(f.top, delta)
+func (f *VBF3) AdvanceGeneration(generations uint8) {
+	f.bottom = f.m255p1add(f.bottom, generations)
+	f.top = f.m255p1add(f.top, generations)
 }
 
 func (f *VBF3) Sweep() {

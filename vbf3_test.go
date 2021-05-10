@@ -46,7 +46,7 @@ func TestVBF3currLife(t *testing.T) {
 					t.Fatalf("unexpected life at bottom=%d top=%d data[%d]=%d: want=%d got=%d", f.bottom, f.top, j, f.data[j], want, got)
 				}
 			}
-			f.Subtract(1)
+			f.AdvanceGeneration(1)
 		}
 	}
 }
@@ -61,20 +61,20 @@ func testTopBottom(t *testing.T, f *VBF3, bottom, top uint8) {
 	}
 }
 
-func TestVBF3Subtract(t *testing.T) {
+func TestVBF3AdvanceGeneration(t *testing.T) {
 	f := NewVBF3(256, 1, 1)
 	testTopBottom(t, f, 1, 1)
 	if t.Failed() {
 		t.Fatal("failed at first round")
 	}
 	for i := 2; i <= 255; i++ {
-		f.Subtract(1)
+		f.AdvanceGeneration(1)
 		want := uint8(i)
 		testTopBottom(t, f, want, want)
 		if t.Failed() {
 			t.Fatalf("failed at round #%d", i)
 		}
 	}
-	f.Subtract(1)
+	f.AdvanceGeneration(1)
 	testTopBottom(t, f, 1, 1)
 }
