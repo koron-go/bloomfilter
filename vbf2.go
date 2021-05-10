@@ -6,6 +6,8 @@ import (
 	"github.com/dgryski/go-metro"
 )
 
+// VBF2 is fix TTL volatile bloom filter.
+// It suppose to replace its backend with Redis.
 type VBF2 struct {
 	m int
 	k int
