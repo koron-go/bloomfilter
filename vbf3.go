@@ -6,6 +6,7 @@ import (
 	"github.com/dgryski/go-metro"
 )
 
+// VBF2 is moving windowed volatile bloom filter.
 type VBF3 struct {
 	m    int
 	k    int
@@ -16,6 +17,7 @@ type VBF3 struct {
 	max    uint8
 }
 
+// NewVBF3 creates a VBF.
 func NewVBF3(m, k int, maxLife uint8) *VBF3 {
 	return &VBF3{
 		m:    m,
@@ -64,6 +66,7 @@ func (f *VBF3) currLife(x int) uint8 {
 	return d
 }
 
+// Put puts a data with life (number of generations until expire)
 func (f *VBF3) Put(d []byte, life uint8) {
 	if life > f.max {
 		panic(fmt.Sprintf("life should be <= %d", f.max))
@@ -78,6 +81,7 @@ func (f *VBF3) Put(d []byte, life uint8) {
 	}
 }
 
+// Check checks a data is available or not.
 func (f *VBF3) Check(d []byte) bool {
 	retval := true
 	for i := 0; i < f.k; i++ {
@@ -93,11 +97,14 @@ func (f *VBF3) Check(d []byte) bool {
 	return retval
 }
 
+// AdvanceGeneration advances generation.
+// If the generation exhausted, data will be expired/evaporated.
 func (f *VBF3) AdvanceGeneration(generations uint8) {
 	f.bottom = f.m255p1add(f.bottom, generations)
 	f.top = f.m255p1add(f.top, generations)
 }
 
+// Sweep cleans up all expired data slots, fill by zeros.
 func (f *VBF3) Sweep() {
 	for i, v := range f.data {
 		if !f.isValid(v) {
