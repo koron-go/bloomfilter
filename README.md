@@ -171,3 +171,15 @@ has := vbf8.Check([]byte("old_data"), 155)
 ```
 
 以上によりVBF2では疑似寿命付きのブルームフィルターを実現しています。
+
+## Redisを使った実装のテスト
+
+```
+$ docker run --rm --name vbf-redis -p 6379:6379 -d redis:6.2.3-alpine3.13
+
+$ export REDIS_URL=redis://127.0.0.1:6379/0
+
+$ go test -run Redis -v
+
+$ docker stop vbf-redis
+```
