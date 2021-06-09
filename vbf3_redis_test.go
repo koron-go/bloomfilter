@@ -55,6 +55,56 @@ func TestVBF3RedisBasic(t *testing.T) {
 	checkVBF3Redis(t, 1000, 7, 1000, 0.1)
 }
 
+func TestVBF3RedisLife(t *testing.T) {
+	c := newTestRedisClient(t)
+	rf := NewVBF3Redis(c, t.Name(), 100, 7)
+	ctx := context.Background()
+	err := rf.Prepare(ctx, 10)
+	if err != nil {
+		t.Fatalf("failed to prepare: %s", err)
+	}
+	t.Cleanup(func() {
+		rf.Delete(ctx)
+	})
+
+	err = rf.Put(ctx, []byte("foo"), 1)
+	if err != nil {
+		t.Fatalf("put \"foo\" failed: %s", err)
+	}
+	err = rf.Put(ctx, []byte("bar"), 2)
+	if err != nil {
+		t.Fatalf("put \"bar\" failed: %s", err)
+	}
+	err = rf.Put(ctx, []byte("baz"), 3)
+	if err != nil {
+		t.Fatalf("put \"baz\" failed: %s", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		for _, tc := range []struct {
+			name string
+			life int
+		}{
+			{"foo", 1},
+			{"bar", 2},
+			{"baz", 3},
+		} {
+			want := tc.life > i
+			got, err := rf.Check(ctx, []byte(tc.name))
+			if err != nil {
+				t.Fatalf("check %q (#%d) failed: %s", tc.name, i, err)
+			}
+			if got != want {
+				t.Errorf("unexpected check %q (%d): want=%t got=%t", tc.name, i, want, got)
+			}
+		}
+		err := rf.AdvanceGeneration(ctx, 1)
+		if err != nil {
+			t.Fatalf("failed to AdvanceGeneration (%d): %s", i, err)
+		}
+	}
+}
+
 func BenchmarkVBF3RedisPut(b *testing.B) {
 	c := newTestRedisClient(b)
 	rf := NewVBF3Redis(c, b.Name(), b.N*10, 7)
@@ -161,4 +211,49 @@ func BenchmarkVBF3RedisSweep(b *testing.B) {
 	if err != nil {
 		b.Fatalf("runtime error: %s", err)
 	}
+}
+
+func testVBF3RedisTopBottom(ctx context.Context, t *testing.T, rf *VBF3Redis, bottom, top uint8) {
+	t.Helper()
+	gen, err := rf.getGen(ctx, rf.c)
+	if err != nil {
+		t.Errorf("faield to get VBF3Gen: %s", err)
+		return
+	}
+	if gen.Bottom != bottom {
+		t.Errorf("bottom mismatch: want=%d got=%d", bottom, gen.Bottom)
+	}
+	if gen.Top != top {
+		t.Errorf("top mismatch: want=%d got=%d", top, gen.Top)
+	}
+}
+
+func TestVBF3RedisAdvanceGeneration(t *testing.T) {
+	c := newTestRedisClient(t)
+	rf := NewVBF3Redis(c, t.Name(), 256, 1)
+	ctx := context.Background()
+	err := rf.Prepare(ctx, 1)
+	if err != nil {
+		t.Fatalf("failed to prepare: %s", err)
+	}
+	t.Cleanup(func() {
+		rf.Delete(ctx)
+	})
+
+	testVBF3RedisTopBottom(ctx, t, rf, 1, 1)
+	if t.Failed() {
+		t.Fatal("failed at first round")
+	}
+
+	for i := 2; i <= 255; i++ {
+		rf.AdvanceGeneration(ctx, 1)
+		want := uint8(i)
+		testVBF3RedisTopBottom(ctx, t, rf, want, want)
+		if t.Failed() {
+			t.Fatalf("failed at round #%d", i)
+		}
+	}
+
+	rf.AdvanceGeneration(ctx, 1)
+	testVBF3RedisTopBottom(ctx, t, rf, 1, 1)
 }
