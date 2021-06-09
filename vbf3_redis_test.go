@@ -112,3 +112,53 @@ func BenchmarkVBF3RedisCheck(b *testing.B) {
 		b.Logf("too big error rate: %.2f%% failure=%d total=%d", rate, fail, b.N)
 	}
 }
+
+func BenchmarkVBF3RedisAdvanceGeneration(b *testing.B) {
+	c := newTestRedisClient(b)
+	rf := NewVBF3Redis(c, b.Name(), 10*1000, 7)
+	ctx := context.Background()
+	err := rf.Prepare(ctx, 10)
+	if err != nil {
+		b.Fatalf("failed to prepare: %s", err)
+	}
+	b.Cleanup(func() {
+		rf.Delete(ctx)
+	})
+
+	for i := 0; i < 1000; i++ {
+		rf.Put(ctx, []byte(strconv.Itoa(i)), 128)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err = rf.AdvanceGeneration(ctx, 1)
+		if err != nil {
+			b.Fatalf("runtime error: %s", err)
+		}
+	}
+}
+
+func BenchmarkVBF3RedisSweep(b *testing.B) {
+	c := newTestRedisClient(b)
+	rf := NewVBF3Redis(c, b.Name(), b.N*10, 7)
+	ctx := context.Background()
+	err := rf.Prepare(ctx, 10)
+	if err != nil {
+		b.Fatalf("failed to prepare: %s", err)
+	}
+	b.Cleanup(func() {
+		rf.Delete(ctx)
+	})
+
+	buf := make([]byte, b.N*10)
+	rand.Read(buf)
+	_, err = c.Set(ctx, rf.keyData, buf, 0).Result()
+	if err != nil {
+		b.Fatalf("failed to setup: %s", err)
+	}
+
+	b.ResetTimer()
+	err = rf.Sweep(ctx)
+	if err != nil {
+		b.Fatalf("runtime error: %s", err)
+	}
+}

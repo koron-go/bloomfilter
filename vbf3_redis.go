@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"time"
 
 	"github.com/dgryski/go-metro"
 	"github.com/go-redis/redis/v8"
@@ -244,9 +242,9 @@ func (rf *VBF3Redis) AdvanceGeneration(ctx context.Context, generations uint8) e
 }
 
 func (rf *VBF3Redis) Sweep(ctx context.Context) error {
-	defer func(st time.Time) {
-		log.Printf("Sweep took %s", time.Since(st))
-	}(time.Now())
+	//defer func(st time.Time) {
+	//	log.Printf("Sweep took %s", time.Since(st))
+	//}(time.Now())
 	gen, err := rf.getGen(ctx, rf.c)
 	if err != nil {
 		return err
@@ -254,6 +252,9 @@ func (rf *VBF3Redis) Sweep(ctx context.Context) error {
 	return watchWithRetry(ctx, rf.c, func(tx *redis.Tx) error {
 		b, err := tx.Get(tx.Context(), rf.keyData).Bytes()
 		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				return nil
+			}
 			return err
 		}
 		var modified bool
