@@ -100,6 +100,10 @@ func (rf *VBF3Redis) hash(d []byte, n int) int {
 }
 
 func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
+	return rf.put2(ctx, d, life)
+}
+
+func (rf *VBF3Redis) put1(ctx context.Context, d []byte, life uint8) error {
 	gen, err := rf.getGen(ctx, rf.c)
 	if err != nil {
 		return err
@@ -126,6 +130,51 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (rf *VBF3Redis) put2(ctx context.Context, d []byte, life uint8) error {
+	gen, err := rf.getGen(ctx, rf.c)
+	if err != nil {
+		return err
+	}
+	if life > gen.Max {
+		return fmt.Errorf("life should be less than (<=) %d", gen.Max)
+	}
+
+	xx := make([]int, rf.k)
+	readArgs := make([]interface{}, 0, rf.k*3)
+	for i := 0; i < rf.k; i++ {
+		x := rf.hash(d, i)
+		xx[i] = x
+		readArgs = append(readArgs, "GET", "u8", x*8)
+	}
+	r, err := rf.c.BitField(ctx, rf.keyData, readArgs...).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get data for put (args=%+v): %w", readArgs, err)
+	}
+
+	nv := m255p1add(gen.Bottom, life-1)
+	writeArgs := make([]interface{}, 0, rf.k*3)
+	for i := 0; i < rf.k; i++ {
+		v := uint8(r[i])
+		var curr uint8
+		if gen.isValid(v) {
+			curr = v - gen.Bottom + 1
+			if v < gen.Bottom {
+				curr--
+			}
+		}
+		if curr == 0 || life > curr {
+			writeArgs = append(writeArgs, "SET", "u8", xx[i]*8, nv)
+		}
+	}
+	if len(writeArgs) > 0 {
+		_, err := rf.c.BitField(ctx, rf.keyData, writeArgs...).Result()
+		if err != nil {
+			return fmt.Errorf("failed to set data for put: %w", err)
 		}
 	}
 	return nil
