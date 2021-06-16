@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/dgryski/go-metro"
@@ -175,6 +176,30 @@ func (rf *VBF3Redis) hash(d []byte, n uint) int {
 	return int(metro.Hash64(d, uint64(n)) % rf.M)
 }
 
+type pos struct {
+	page  uint64
+	index uint64
+}
+
+func (a pos) less(b pos) bool {
+	return a.page < b.page || (a.page == b.page && a.index < b.index)
+}
+
+func (rf *VBF3Redis) hashArray(d []byte) []pos {
+	xx := make([]pos, rf.K)
+	for i := uint(0); i < rf.K; i++ {
+		x := metro.Hash64(d, uint64(i)) % rf.M
+		xx[i] = pos{
+			page:  x / pageSize,
+			index: x % pageSize,
+		}
+	}
+	sort.Slice(xx, func(i, j int) bool {
+		return xx[i].less(xx[j])
+	})
+	return xx
+}
+
 func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 	if life > rf.MaxLife {
 		return fmt.Errorf("life should be less than (<=) %d", rf.MaxLife)
@@ -183,6 +208,8 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 	if err != nil {
 		return err
 	}
+
+	// TODO: support pagings
 
 	xx := make([]int, rf.K)
 	readArgs := make([]interface{}, 0, rf.K*3)
@@ -230,6 +257,7 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// TODO: support pagings
 	xx := make([]int, rf.K)
 	args := make([]interface{}, 0, 3*rf.K)
 	for i := uint(0); i < rf.K; i++ {
