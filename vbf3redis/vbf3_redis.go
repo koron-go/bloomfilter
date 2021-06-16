@@ -191,7 +191,7 @@ func (rf *VBF3Redis) hashArray(d []byte) []pos {
 		x := metro.Hash64(d, uint64(i)) % rf.M
 		xx[i] = pos{
 			page:  x / pageSize,
-			index: x % pageSize,
+			index: (x % pageSize) * 8,
 		}
 	}
 	sort.Slice(xx, func(i, j int) bool {
@@ -209,40 +209,81 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 		return err
 	}
 
-	// TODO: support pagings
+	// get current values by hashed `d` keys
 
-	xx := make([]int, rf.K)
-	readArgs := make([]interface{}, 0, rf.K*3)
-	for i := uint(0); i < rf.K; i++ {
-		x := rf.hash(d, i)
-		xx[i] = x
-		readArgs = append(readArgs, "GET", "u8", x*8)
+	pp := rf.hashArray(d)
+	pages := make([]int, rf.pageNum)
+	args := make([]interface{}, 0, len(pp)*3)
+	for _, p := range pp {
+		pages[p.page]++
+		args = append(args, "GET", "u8", p.index)
 	}
-	r, err := rf.c.BitField(ctx, rf.key.data(0), readArgs...).Result()
+
+	cmds := make([]*redis.IntSliceCmd, 0, rf.pageNum)
+	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		x := 0
+		for i, n := range pages {
+			if n == 0 {
+				continue
+			}
+			cmds = append(cmds, pipe.BitField(ctx, rf.key.data(i), args[x:x+n*3]...))
+			x += n * 3
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get data for put (args=%+v): %w", readArgs, err)
+		return fmt.Errorf("failed to get data for put: %w", err)
 	}
+
+	// detect updates
+
+	updateIndex := 0
+	updatePages := make([]int, rf.pageNum)
+	updates := make([]pos, 0, len(pp))
+	for i, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		for _, v := range cmd.Val() {
+			v8 := uint8(v)
+			var curr uint8
+			if gen.isValid(v8) {
+				curr = v8 - gen.Bottom + 1
+				if v8 < gen.Bottom {
+					curr--
+				}
+			}
+			if curr == 0 || life > curr {
+				updatePages[i]++
+				updates = append(updates, pp[updateIndex])
+			}
+			updateIndex++
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	// apply updates
 
 	nv := m255p1add(gen.Bottom, life-1)
-	writeArgs := make([]interface{}, 0, rf.K*3)
-	for i := uint(0); i < rf.K; i++ {
-		v := uint8(r[i])
-		var curr uint8
-		if gen.isValid(v) {
-			curr = v - gen.Bottom + 1
-			if v < gen.Bottom {
-				curr--
+	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		base := 0
+		for i, n := range updatePages {
+			if n == 0 {
+				continue
 			}
+			args := make([]interface{}, 0, n*4)
+			for j := 0; j < n; j++ {
+				args = append(args, "SET", "u8", updates[base+j].index, nv)
+			}
+			base += n
+			pipe.BitField(ctx, rf.key.data(i), args...)
 		}
-		if curr == 0 || life > curr {
-			writeArgs = append(writeArgs, "SET", "u8", xx[i]*8, nv)
-		}
-	}
-	if len(writeArgs) > 0 {
-		_, err := rf.c.BitField(ctx, rf.key.data(0), writeArgs...).Result()
-		if err != nil {
-			return fmt.Errorf("failed to set data for put: %w", err)
-		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set data for put: %w", err)
 	}
 	return nil
 }
@@ -257,38 +298,76 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// TODO: support pagings
-	xx := make([]int, rf.K)
-	args := make([]interface{}, 0, 3*rf.K)
-	for i := uint(0); i < rf.K; i++ {
-		x := rf.hash(d, i)
-		args = append(args, "GET", "u8", x*8)
-		xx[i] = x
+
+	// get current values by hashed `d` keys
+
+	pp := rf.hashArray(d)
+	pages := make([]int, rf.pageNum)
+	args := make([]interface{}, 0, len(pp)*3)
+	for _, p := range pp {
+		pages[p.page]++
+		args = append(args, "GET", "u8", p.index)
 	}
-	vv, err := rf.c.BitField(ctx, rf.key.data(0), args...).Result()
+
+	cmds := make([]*redis.IntSliceCmd, 0, rf.pageNum)
+	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		x := 0
+		for i, n := range pages {
+			if n == 0 {
+				continue
+			}
+			cmds = append(cmds, pipe.BitField(ctx, rf.key.data(i), args[x:x+n*3]...))
+			x += n * 3
+		}
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("failed to check/get data: %w", err)
 	}
-	invalids := make([]vbf3pair, 0, len(vv))
-	retval := true
-	for i, v := range vv {
-		v8 := uint8(v)
-		if !gen.isValid(v8) {
-			retval = false
-			invalids = append(invalids, vbf3pair{x: xx[i], v: v8})
+
+	// detect invalids
+
+	invalidIndex := 0
+	invalidPages := make([]int, rf.pageNum)
+	invalids := make([]pos, 0, len(pp))
+	for i, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		for _, v := range cmd.Val() {
+			v8 := uint8(v)
+			if !gen.isValid(v8) {
+				invalidPages[i]++
+				invalids = append(invalids, pp[invalidIndex])
+			}
+			invalidIndex++
 		}
 	}
-	if len(invalids) >= 0 {
-		args := make([]interface{}, 0, 3*len(invalids))
-		for _, d := range invalids {
-			args = append(args, "SET", "u8", d.x*8, 0)
-		}
-		_, err := rf.c.BitField(ctx, rf.key.data(0), args...).Result()
-		if err != nil {
-			return retval, fmt.Errorf("failed to clear invalids: %w", err)
-		}
+	if len(invalids) == 0 {
+		return true, nil
 	}
-	return retval, nil
+
+	// clear invalids
+
+	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		base := 0
+		for i, n := range invalidPages {
+			if n == 0 {
+				continue
+			}
+			args := make([]interface{}, 0, n*4)
+			for j := 0; j < n; j++ {
+				args = append(args, "SET", "u8", invalids[base+j].index, 0)
+			}
+			base += n
+			pipe.BitField(ctx, rf.key.data(i), args...)
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to clear invalids: %w", err)
+	}
+	return false, nil
 }
 
 func (rf *VBF3Redis) AdvanceGeneration(ctx context.Context, generations uint8) error {
