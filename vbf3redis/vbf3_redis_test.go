@@ -143,7 +143,7 @@ func BenchmarkLargeVBF3RedisPut(b *testing.B) {
 func benchmarkCheck(b *testing.B, m uint64, k uint, maxLife uint8) {
 	c := newTestRedisClient(b)
 	ctx := context.Background()
-	rf, err := Open(ctx, c, b.Name(), m, 7, 10)
+	rf, err := Open(ctx, c, b.Name(), m, k, maxLife)
 	if err != nil {
 		b.Fatalf("failed to create: %s", err)
 	}

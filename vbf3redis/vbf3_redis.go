@@ -240,7 +240,7 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 	updateIndex := 0
 	updatePages := make([]int, rf.pageNum)
 	updates := make([]pos, 0, len(pp))
-	for i, cmd := range cmds {
+	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
 		}
@@ -254,7 +254,7 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 				}
 			}
 			if curr == 0 || life > curr {
-				updatePages[i]++
+				updatePages[pp[updateIndex].page]++
 				updates = append(updates, pp[updateIndex])
 			}
 			updateIndex++
@@ -266,6 +266,7 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 
 	// apply updates
 
+	cmds2 := make([]*redis.IntSliceCmd, 0, len(updates))
 	nv := m255p1add(gen.Bottom, life-1)
 	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		base := 0
@@ -278,13 +279,14 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 				args = append(args, "SET", "u8", updates[base+j].index, nv)
 			}
 			base += n
-			pipe.BitField(ctx, rf.key.data(i), args...)
+			cmds2 = append(cmds2, pipe.BitField(ctx, rf.key.data(i), args...))
 		}
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set data for put: %w", err)
 	}
+
 	return nil
 }
 
@@ -330,14 +332,14 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 	invalidIndex := 0
 	invalidPages := make([]int, rf.pageNum)
 	invalids := make([]pos, 0, len(pp))
-	for i, cmd := range cmds {
+	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
 		}
 		for _, v := range cmd.Val() {
 			v8 := uint8(v)
 			if !gen.isValid(v8) {
-				invalidPages[i]++
+				invalidPages[pp[invalidIndex].page]++
 				invalids = append(invalids, pp[invalidIndex])
 			}
 			invalidIndex++
@@ -446,6 +448,23 @@ func (rf *VBF3Redis) Drop(ctx context.Context) error {
 		}
 		pipe.Del(ctx, rf.key.gen())
 		pipe.Del(ctx, rf.key.props())
+		return nil
+	})
+	return err
+}
+
+func Drop(ctx context.Context, c redis.UniversalClient, name string) error {
+	keys, err := c.Keys(ctx, name+"_").Result()
+	if err != nil {
+		return fmt.Errorf("faild to list up keys: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err = c.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, k := range keys {
+			pipe.Del(ctx, k)
+		}
 		return nil
 	})
 	return err
