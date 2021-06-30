@@ -45,7 +45,7 @@ VBF3 (Volatile Bloom Filter 3) は8ビットのVBF2として実装されてい�
 VBF2 の詳細は [VBF2の実装詳細][vbf2-details]を参照してください。
 以下ではそれを踏まえた上でVBF3の実装詳細を解説します。
 
-[vbf2-details]:(https://github.com/koron-go/bloomfilter/blob/master/README.md#vbf2%E3%81%AE%E5%AE%9F%E8%A3%85%E8%A9%B3%E7%B4%B0)
+[vbf2-details]:https://github.com/koron-go/bloomfilter/blob/master/README.md#vbf2%E3%81%AE%E5%AE%9F%E8%A3%85%E8%A9%B3%E7%B4%B0
 
 ### VBF3 の実装詳細
 
