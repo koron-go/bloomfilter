@@ -1,7 +1,6 @@
 package vbf3redis
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -19,12 +18,5 @@ func newTestRedisClient(tb testing.TB) *redis.Client {
 		tb.Fatal(err)
 	}
 	c := redis.NewClient(opts)
-	tb.Cleanup(func() {
-		_, err := c.Del(context.Background(), tb.Name()).Result()
-		if err != nil {
-			tb.Helper()
-			tb.Errorf("failed to cleanup: %s", err)
-		}
-	})
 	return c
 }

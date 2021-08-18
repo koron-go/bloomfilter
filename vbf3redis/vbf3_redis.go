@@ -329,6 +329,7 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 
 	// detect invalids
 
+	validAll := true
 	invalidIndex := 0
 	invalidPages := make([]int, rf.pageNum)
 	invalids := make([]pos, 0, len(pp))
@@ -339,14 +340,21 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 		for _, v := range cmd.Val() {
 			v8 := uint8(v)
 			if !gen.isValid(v8) {
-				invalidPages[pp[invalidIndex].page]++
-				invalids = append(invalids, pp[invalidIndex])
+				validAll = false
+				if v8 != 0 {
+					invalidPages[pp[invalidIndex].page]++
+					invalids = append(invalids, pp[invalidIndex])
+				}
 			}
 			invalidIndex++
 		}
 	}
-	if len(invalids) == 0 {
+
+	if validAll {
 		return true, nil
+	}
+	if len(invalids) == 0 {
+		return false, nil
 	}
 
 	// clear invalids
