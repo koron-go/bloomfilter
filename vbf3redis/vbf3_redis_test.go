@@ -21,11 +21,14 @@ func checkVBF3Redis(t *testing.T, m uint64, k uint, num int, f float64) {
 		t.Cleanup(func() {
 			rf.Drop(ctx)
 		})
+
+		vals := make([][]byte, 0, mid)
 		for i := 0; i < mid; i++ {
-			err := rf.Put(ctx, []byte(strconv.Itoa(i)), 1)
-			if err != nil {
-				t.Fatalf("put failed #%d: %s", i, err)
-			}
+			vals = append(vals, []byte(strconv.Itoa(i)))
+		}
+		err = rf.PutAll(ctx, 1, vals)
+		if err != nil {
+			t.Fatalf("put failed: %s", err)
 		}
 
 		falsePositive := 0

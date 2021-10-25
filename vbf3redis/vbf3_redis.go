@@ -185,33 +185,30 @@ func (a pos) less(b pos) bool {
 	return a.page < b.page || (a.page == b.page && a.index < b.index)
 }
 
-func (rf *VBF3Redis) hashArray(d []byte) []pos {
-	xx := make([]pos, rf.K)
-	for i := uint(0); i < rf.K; i++ {
-		x := metro.Hash64(d, uint64(i)) % rf.M
-		xx[i] = pos{
-			page:  x / pageSize,
-			index: (x % pageSize) * 8,
+func (rf *VBF3Redis) hashArray(dd ...[]byte) []pos {
+	pp := make([]pos, rf.K)
+	seen := map[uint64]struct{}{}
+	for _, d := range dd {
+		for i := uint(0); i < rf.K; i++ {
+			x := metro.Hash64(d, uint64(i)) % rf.M
+			if _, ok := seen[x]; ok {
+				continue
+			}
+			seen[x] = struct{}{}
+			pp[i] = pos{
+				page:  x / pageSize,
+				index: (x % pageSize) * 8,
+			}
 		}
 	}
-	sort.Slice(xx, func(i, j int) bool {
-		return xx[i].less(xx[j])
+	sort.Slice(pp, func(i, j int) bool {
+		return pp[i].less(pp[j])
 	})
-	return xx
+	return pp
 }
 
-func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
-	if life > rf.MaxLife {
-		return fmt.Errorf("life should be less than (<=) %d", rf.MaxLife)
-	}
-	gen, err := getGen(ctx, rf.c, rf.key)
-	if err != nil {
-		return err
-	}
-
-	// get current values by hashed `d` keys
-
-	pp := rf.hashArray(d)
+// getValues gets current values by hashed `d` keys.
+func (rf *VBF3Redis) getValues(ctx context.Context, pp []pos) ([]*redis.IntSliceCmd, error) {
 	pages := make([]int, rf.pageNum)
 	args := make([]interface{}, 0, len(pp)*3)
 	for _, p := range pp {
@@ -220,7 +217,7 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 	}
 
 	cmds := make([]*redis.IntSliceCmd, 0, rf.pageNum)
-	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, err := rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		x := 0
 		for i, n := range pages {
 			if n == 0 {
@@ -232,14 +229,70 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get data for put: %w", err)
+		return nil, fmt.Errorf("failed to check/get data: %w", err)
 	}
+	return cmds, nil
+}
 
+func (rf *VBF3Redis) setValues(ctx context.Context, pp []pos, pages []int, value uint8) error {
+	_, err := rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		base := 0
+		for i, n := range pages {
+			if n == 0 {
+				continue
+			}
+			args := make([]interface{}, 0, n*4)
+			for j := 0; j < n; j++ {
+				args = append(args, "SET", "u8", pp[base+j].index, value)
+			}
+			base += n
+			pipe.BitField(ctx, rf.key.data(i), args...)
+		}
+		return nil
+	})
+	return err
+}
+
+// Put puts a value with life.
+func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
+	if life > rf.MaxLife {
+		return fmt.Errorf("life should be less than (<=) %d", rf.MaxLife)
+	}
+	gen, err := getGen(ctx, rf.c, rf.key)
+	if err != nil {
+		return err
+	}
+	pp := rf.hashArray(d)
+	return rf.put(ctx, gen, pp, life)
+}
+
+// PutAll puts all values with life
+func (rf *VBF3Redis) PutAll(ctx context.Context, life uint8, dd [][]byte) error {
+	// preparation
+	if life > rf.MaxLife {
+		return fmt.Errorf("life should be less than (<=) %d", rf.MaxLife)
+	}
+	if len(dd) == 0 {
+		return nil
+	}
+	gen, err := getGen(ctx, rf.c, rf.key)
+	if err != nil {
+		return err
+	}
+	pp := rf.hashArray(dd...)
+	return rf.put(ctx, gen, pp, life)
+}
+
+// put updates postions.
+func (rf *VBF3Redis) put(ctx context.Context, gen *vbf3gen, pp []pos, life uint8) error {
+	cmds, err := rf.getValues(ctx, pp)
+	if err != nil {
+		return err
+	}
 	// detect updates
-
-	updateIndex := 0
 	updatePages := make([]int, rf.pageNum)
 	updates := make([]pos, 0, len(pp))
+	updateIndex := 0
 	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
@@ -263,30 +316,12 @@ func (rf *VBF3Redis) Put(ctx context.Context, d []byte, life uint8) error {
 	if len(updates) == 0 {
 		return nil
 	}
-
 	// apply updates
-
-	cmds2 := make([]*redis.IntSliceCmd, 0, len(updates))
 	nv := m255p1add(gen.Bottom, life-1)
-	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		base := 0
-		for i, n := range updatePages {
-			if n == 0 {
-				continue
-			}
-			args := make([]interface{}, 0, n*4)
-			for j := 0; j < n; j++ {
-				args = append(args, "SET", "u8", updates[base+j].index, nv)
-			}
-			base += n
-			cmds2 = append(cmds2, pipe.BitField(ctx, rf.key.data(i), args...))
-		}
-		return nil
-	})
+	err = rf.setValues(ctx, updates, updatePages, nv)
 	if err != nil {
 		return fmt.Errorf("failed to set data for put: %w", err)
 	}
-
 	return nil
 }
 
@@ -300,39 +335,17 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
-	// get current values by hashed `d` keys
-
 	pp := rf.hashArray(d)
-	pages := make([]int, rf.pageNum)
-	args := make([]interface{}, 0, len(pp)*3)
-	for _, p := range pp {
-		pages[p.page]++
-		args = append(args, "GET", "u8", p.index)
-	}
-
-	cmds := make([]*redis.IntSliceCmd, 0, rf.pageNum)
-	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		x := 0
-		for i, n := range pages {
-			if n == 0 {
-				continue
-			}
-			cmds = append(cmds, pipe.BitField(ctx, rf.key.data(i), args[x:x+n*3]...))
-			x += n * 3
-		}
-		return nil
-	})
+	cmds, err := rf.getValues(ctx, pp)
 	if err != nil {
-		return false, fmt.Errorf("failed to check/get data: %w", err)
+		return false, err
 	}
 
 	// detect invalids
-
 	validAll := true
-	invalidIndex := 0
 	invalidPages := make([]int, rf.pageNum)
 	invalids := make([]pos, 0, len(pp))
+	invalidIndex := 0
 	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
@@ -349,7 +362,6 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 			invalidIndex++
 		}
 	}
-
 	if validAll {
 		return true, nil
 	}
@@ -358,22 +370,7 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 	}
 
 	// clear invalids
-
-	_, err = rf.c.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		base := 0
-		for i, n := range invalidPages {
-			if n == 0 {
-				continue
-			}
-			args := make([]interface{}, 0, n*4)
-			for j := 0; j < n; j++ {
-				args = append(args, "SET", "u8", invalids[base+j].index, 0)
-			}
-			base += n
-			pipe.BitField(ctx, rf.key.data(i), args...)
-		}
-		return nil
-	})
+	err = rf.setValues(ctx, invalids, invalidPages, 0)
 	if err != nil {
 		return false, fmt.Errorf("failed to clear invalids: %w", err)
 	}
