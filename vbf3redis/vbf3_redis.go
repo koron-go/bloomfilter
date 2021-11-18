@@ -186,7 +186,7 @@ func (a pos) less(b pos) bool {
 }
 
 func (rf *VBF3Redis) hashArray(dd ...[]byte) []pos {
-	pp := make([]pos, rf.K)
+	pp := make([]pos, 0, int(rf.K)*len(dd))
 	seen := map[uint64]struct{}{}
 	for _, d := range dd {
 		for i := uint(0); i < rf.K; i++ {
@@ -195,10 +195,10 @@ func (rf *VBF3Redis) hashArray(dd ...[]byte) []pos {
 				continue
 			}
 			seen[x] = struct{}{}
-			pp[i] = pos{
+			pp = append(pp, pos{
 				page:  x / pageSize,
 				index: (x % pageSize) * 8,
-			}
+			})
 		}
 	}
 	sort.Slice(pp, func(i, j int) bool {
