@@ -86,7 +86,7 @@ func TestVBF3RedisLife(t *testing.T) {
 		t.Fatalf("put \"baz\" failed: %s", err)
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i <= 3; i++ {
 		for _, tc := range []struct {
 			name string
 			life int
