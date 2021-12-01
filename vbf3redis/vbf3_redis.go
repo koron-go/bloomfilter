@@ -185,6 +185,39 @@ func (a pos) less(b pos) bool {
 	return a.page < b.page || (a.page == b.page && a.index < b.index)
 }
 
+func shrinkPos(pp []pos) []pos {
+	if len(pp) == 0 {
+		return nil
+	}
+	sort.Slice(pp, func(i, j int) bool {
+		return pp[i].less(pp[j])
+	})
+	rv := make([]pos, 1, len(pp))
+	rv[0] = pp[0]
+	last := pp[0]
+	for _, p := range pp[1:] {
+		if p == last {
+			continue
+		}
+		rv = append(rv, p)
+	}
+	return rv
+}
+
+func (rf *VBF3Redis) hashPos(dd ...[]byte) []pos {
+	pp := make([]pos, 0, int(rf.K)*len(dd))
+	for _, d := range dd {
+		for i := uint(0); i < rf.K; i++ {
+			x := metro.Hash64(d, uint64(i)) % rf.M
+			pp = append(pp, pos{
+				page:  x / pageSize,
+				index: (x % pageSize) * 8,
+			})
+		}
+	}
+	return pp
+}
+
 func (rf *VBF3Redis) hashArray(dd ...[]byte) []pos {
 	pp := make([]pos, 0, int(rf.K)*len(dd))
 	seen := map[uint64]struct{}{}
@@ -375,6 +408,69 @@ func (rf *VBF3Redis) Check(ctx context.Context, d []byte) (bool, error) {
 		return false, fmt.Errorf("failed to clear invalids: %w", err)
 	}
 	return false, nil
+}
+
+func (rf *VBF3Redis) CheckAll(ctx context.Context, dd [][]byte) ([]bool, error) {
+	if len(dd) == 0 {
+		return nil, nil
+	}
+	gen, err := getGen(ctx, rf.c, rf.key)
+	if err != nil {
+		return nil, err
+	}
+	rawpp := rf.hashPos(dd...)
+	pp0 := make([]pos, len(rawpp))
+	copy(pp0, rawpp)
+	pp := shrinkPos(pp0)
+	cmds, err := rf.getValues(ctx, pp)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]bool, len(pp))
+	invalidPages := make([]int, rf.pageNum)
+	invalids := make([]pos, 0, len(pp))
+	index := 0
+	for _, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		for _, v := range cmd.Val() {
+			v8 := uint8(v)
+			r := gen.isValid(v8)
+			results[index] = r
+			if !r && v8 != 0 {
+				invalidPages[pp[index].page]++
+				invalids = append(invalids, pp[index])
+			}
+			index++
+		}
+	}
+
+	// clear invalid registers.
+	if len(invalids) > 0 {
+		err := rf.setValues(ctx, invalids, invalidPages, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to clear invalids: %w", err)
+		}
+	}
+
+	// compose return value
+	rv := make([]bool, len(dd))
+	for i := range dd {
+		valid := true
+		for _, p := range rawpp[i*int(rf.K) : i*int(rf.K)+int(rf.K)] {
+			x := sort.Search(len(pp), func(i int) bool {
+				return p.less(pp[i])
+			})
+			if !results[x-1] {
+				valid = false
+				break
+			}
+		}
+		rv[i] = valid
+	}
+	return rv, nil
 }
 
 func (rf *VBF3Redis) AdvanceGeneration(ctx context.Context, generations uint8) error {

@@ -284,3 +284,58 @@ func TestVBF3RedisAdvanceGeneration(t *testing.T) {
 	rf.AdvanceGeneration(ctx, 1)
 	testVBF3RedisTopBottom(ctx, t, rf, 1, 1)
 }
+
+func TestCheckAll(t *testing.T) {
+	ctx := context.Background()
+	c := newTestRedisClient(t)
+	rf, err := Open(ctx, c, t.Name(), 1000, 7, 10)
+	if err != nil {
+		t.Fatalf("failed to create: %s", err)
+	}
+	t.Cleanup(func() {
+		rf.Drop(ctx)
+	})
+
+	var (
+		foo = []byte("foo")
+		bar = []byte("bar")
+		baz = []byte("baz")
+		qux = []byte("qux")
+		xyz = []byte("xyz")
+		non = []byte("non")
+	)
+
+	err = rf.PutAll(ctx, 1, [][]byte{foo, bar, baz})
+	if err != nil {
+		t.Fatalf("failed to PutAll: %s", err)
+	}
+
+	for i, c := range []struct {
+		keys  [][]byte
+		wants []bool
+	}{
+		{[][]byte{foo, bar, baz}, []bool{true, true, true}},
+		{[][]byte{foo}, []bool{true}},
+		{[][]byte{bar}, []bool{true}},
+		{[][]byte{baz}, []bool{true}},
+
+		{[][]byte{qux, xyz, non}, []bool{false, false, false}},
+		{[][]byte{qux}, []bool{false}},
+		{[][]byte{xyz}, []bool{false}},
+		{[][]byte{non}, []bool{false}},
+
+		{[][]byte{foo, qux, xyz}, []bool{true, false, false}},
+		{[][]byte{xyz, foo, qux}, []bool{false, true, false}},
+		{[][]byte{qux, xyz, foo}, []bool{false, false, true}},
+	} {
+		gots, err := rf.CheckAll(ctx, c.keys)
+		if err != nil {
+			t.Fatalf("failed to CheckAll i=%d c=%+v: %s", i, c, err)
+		}
+		for j, want := range c.wants {
+			if gots[j] != want {
+				t.Errorf("unmatch i=%d j=%d want=%t got=%t", i, j, want, gots[j])
+			}
+		}
+	}
+}
